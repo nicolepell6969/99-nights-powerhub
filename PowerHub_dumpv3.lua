@@ -121,14 +121,13 @@ log("\n===== POWERHUB DATA DUMPER v3 selesai =====")
 local fullDump = table.concat(out, "\n")
 log("\n[Dump size: "..tostring(#fullDump).." chars]")
 
--- POST in background thread (large body)
+-- POST in background thread (large body) via HttpService:PostAsync (executor-safe)
 task.spawn(function()
     local ok, result = pcall(function()
-        local encoded = fullDump
-        return game:HttpPost(ENDPOINT .. "?token=" .. TOKEN .. "&name=dumpv3_" .. tostring(os.time()), {
-            Body = encoded,
-            ContentType = "application/x-www-form-urlencoded"
-        })
+        local http = game:GetService("HttpService")
+        local url = ENDPOINT .. "?token=" .. TOKEN .. "&name=dumpv3_" .. tostring(os.time())
+        -- PostAsync(url, body, contentType, compress) returns response string
+        return http:PostAsync(url, fullDump, "application/x-www-form-urlencoded", false)
     end)
     if ok then
         print("✅ DUMP UPLOADED. Cek GitHub /dumps/dumpv3_*.txt")
