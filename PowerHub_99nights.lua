@@ -115,12 +115,19 @@ function Window:New(opts)
     holder.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             dragging = true
-            dragOff = input.Position - holder.AbsolutePosition
+            local p = input.Position
+            local a = holder.AbsolutePosition
+            if p and a then
+                dragOff = Vector2.new(p.X - a.X, p.Y - a.Y)
+            end
         end
     end)
     holder.InputChanged:Connect(function(ic)
-        if ic.UserInputType == Enum.UserInputType.MouseMovement and dragging then
-            holder.Position = UDim2.new(0, ic.Position.X - dragOff.X, 0, ic.Position.Y - dragOff.Y)
+        if ic.UserInputType == Enum.UserInputType.MouseMovement and dragging and dragOff then
+            local p = ic.Position
+            if p then
+                holder.Position = UDim2.new(0, p.X - dragOff.X, 0, p.Y - dragOff.Y)
+            end
         end
     end)
     UserInputService.InputEnded:Connect(function(ie)
@@ -187,7 +194,7 @@ function Window:AddTab(name, icon)
     local pad = Instance.new("UIPadding"); pad.PaddingLeft = UDim.new(0, 2); pad.PaddingTop = UDim.new(0, 2); pad.Parent = page
 
     local tab = {
-        Name = name, Page = page, Button = tabBtn, Layout = layout,
+        Name = name, Page = page, TabBtn = tabBtn, Layout = layout,
         elements = {},
     }
     self.tabs[#self.tabs + 1] = tab
@@ -195,7 +202,7 @@ function Window:AddTab(name, icon)
     local function selectTab()
         for _, t in ipairs(self.tabs) do
             t.Page.Visible = false
-            t.Button.BackgroundColor3 = UI.Theme.panel2
+            t.TabBtn.BackgroundColor3 = UI.Theme.panel2
         end
         page.Visible = true
         tabBtn.BackgroundColor3 = UI.Theme.accent
