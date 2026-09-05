@@ -251,6 +251,14 @@ function Window:AddTab(name, icon)
         local val = opts.Value or opts.Min
         local fmt = opts.Format or function(v) return tostring(v) end
         local trackW = 0
+        local function updateVisual()
+            local w = track.AbsoluteSize.X or 0
+            local frac = (val - opts.Min) / ((opts.Max - opts.Min) or 1)
+            fill.Size = UDim2.new(0, w * frac, 1, 0)
+            handle.Position = UDim2.new(0, w * frac - 7, 0, -5)
+            valLbl.Text = fmt(val)
+            trackW = w
+        end
         local function setFromX(xAbs)
             local trackAbs = track.AbsolutePosition
             local w = track.AbsoluteSize.X
@@ -260,14 +268,6 @@ function Window:AddTab(name, icon)
             val = math.clamp(val, opts.Min, opts.Max)
             updateVisual()
             if opts.Callback then opts.Callback(val) end
-        end
-        local function updateVisual()
-            local w = track.AbsoluteSize.X or 0
-            local frac = (val - opts.Min) / ((opts.Max - opts.Min) or 1)
-            fill.Size = UDim2.new(0, w * frac, 1, 0)
-            handle.Position = UDim2.new(0, w * frac - 7, 0, -5)
-            valLbl.Text = fmt(val)
-            trackW = w
         end
 
         local draggingS = false
