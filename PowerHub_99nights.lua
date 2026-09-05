@@ -192,7 +192,7 @@ function Window:AddTab(name, icon)
     }
     self.tabs[#self.tabs + 1] = tab
 
-    tabBtn.MouseButton1Click:Connect(function()
+    local function selectTab()
         for _, t in ipairs(self.tabs) do
             t.Page.Visible = false
             t.Button.BackgroundColor3 = UI.Theme.panel2
@@ -200,9 +200,11 @@ function Window:AddTab(name, icon)
         page.Visible = true
         tabBtn.BackgroundColor3 = UI.Theme.accent
         activeTab = tab
-    end)
+    end
+    tabBtn.MouseButton1Click:Connect(selectTab)
 
-    if #self.tabs == 1 then tabBtn.MouseButton1Click:Fire() end
+    -- activate first tab without firing the RBXScriptSignal (Fire() isn't a client method)
+    if #self.tabs == 1 then selectTab() end
 
     -- builders
     function tab:Toggle(opts)
