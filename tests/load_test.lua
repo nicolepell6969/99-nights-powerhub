@@ -41,6 +41,16 @@ function CFrame.new(a,b,c)
 end
 function CFrame.__add(self,v) return CF(self.Position.X+v.X,self.Position.Y+v.Y,self.Position.Z+v.Z) end
 
+-- ---------------- Vector2 (used by GUIs: AbsoluteSize/Position, drag math) ----------------
+local Vector2 = {}; Vector2.__index = Vector2
+local function V2(x,y) return setmetatable({X=x or 0,Y=y or 0}, Vector2) end
+Vector2.new = V2
+function Vector2:__add(o) return V2(self.X+o.X,self.Y+o.Y) end
+function Vector2:__sub(o) return V2(self.X-o.X,self.Y-o.Y) end
+function Vector2:__mul(s) return V2(self.X*s,self.Y*s) end
+function Vector2:__tostring() return string.format("(%g,%g)",self.X,self.Y) end
+_G.Vector2 = V2
+
 -- ---------------- Color3 ----------------
 local Color3 = {}; Color3.__index = Color3
 local function C3(r,g,b) return setmetatable({R=r or 0,G=g or 0,B=b or 0,_c=true}, Color3) end
@@ -56,6 +66,15 @@ function UDim2.new(a,b,c,d) return {X={Scale=a,Offset=b or 0},Y={Scale=c,Offset=
 function UDim2.fromScale(a,b) return UDim2.new(a,0,b,0) end
 function UDim2.fromOffset(x,y) return UDim2.new(0,x,0,y) end
 _G.UDim = UDim; _G.UDim2 = UDim2
+
+-- ---------- TweenInfo (used by v5 GUIs) ----------
+TweenInfo = {}
+local TweenInfoMeta = { __index = TweenInfo }
+TweenInfo.__call = function(_, ...) return setmetatable({}, { __index = TweenInfo }) end
+TweenInfo.new = function(d, es, ed, delay, reps, rev)
+    return setmetatable({ duration = d, easing = es, delay = delay, repeats = reps, reverses = rev }, TweenInfoMeta)
+end
+_G.TweenInfo = TweenInfo
 
 -- ---------------- Event ----------------
 local Event = {}; Event.__index = Event
@@ -75,9 +94,11 @@ Enum.SortOrder = {LayoutOrder="LO"}
 Enum.AutomaticSize = {Y="Y"}
 Enum.TextXAlignment = {Left="L",Right="R"}
 Enum.ZIndexBehavior = {Sibling="Sib"}
-Enum.Font = {GothamBold="GothamBold", Gotham="Gotham"}
+Enum.Font = {GothamBold="GothamBold", Gotham="Gotham", GothamMedium="GothamMedium"}
 Enum.HorizontalAlignment = {Center="Center", Left="Left"}
 Enum.AutoButtonColor = {Default="Default"}
+Enum.EasingStyle = {Quad="Quad", Linear="Linear", Back="Back", Bounce="Bounce"}
+Enum.EasingDirection = {Out="Out", In="In", InOut="InOut"}
 
 -- ---------------- Instance ----------------
 local InstanceMethods = {
@@ -119,6 +140,11 @@ local InstanceMethods = {
     IsDescendantOf = function(self,anc)
         local p=self.Parent; while p do if p==anc then return true end p=p.Parent end return false
     end,
+    GetPropertyChangedSignal = function() return newEvent() end,
+    GetFullName = function(self)
+        local names = {}; local p = self; while p and p.Name do table.insert(names, 1, p.Name); p = p.Parent end
+        return table.concat(names, ".")
+    end,
 }
 local EVENT_SUFFIXES = {"InputBegan","InputChanged","InputEnded","MouseButton1Click","MouseEnter","MouseLeave","CharacterAdded","PlayerAdded","PlayerRemoving","Heartbeat","RenderStepped","Stepped"}
 local function isEventName(k)
@@ -147,6 +173,9 @@ local function makeInstance(className, name)
     inst.ScrollBarThickness=10; inst.AutomaticCanvasSize=nil; inst.CanvasSize=nil
     inst.CornerRadius=nil; inst.MaxForce=nil; inst.Velocity=nil; inst.AssemblyLinearVelocity=nil
     inst.Adornee=nil; inst.MaxDistance=100; inst.PaddingLeft=nil
+    -- absolute geometry used by GUIs (sliders, position math)
+    inst.AbsoluteSize = Vector2.new(200, 20)
+    inst.AbsolutePosition = Vector2.new(0, 0)
     return inst
 end
 
@@ -216,8 +245,10 @@ Lighting.OutdoorAmbient=Color3.new(); Lighting.GlobalShadows=true; Lighting.FogE
 Services.Lighting = Lighting
 
 local TweenService = {}
-TweenService.Create = function() end
+-- Return an object with Play/Cancel to satisfy v5's `TweenService:Create(...):Play()`
+TweenService.Create = function() return { Play = function() end, Cancel = function() end } end
 Services.TweenService = TweenService
+_G.TweenService = TweenService
 
 local ReplicatedStorage = makeInstance("ReplicatedStorage","ReplicatedStorage")
 Services.ReplicatedStorage = ReplicatedStorage
