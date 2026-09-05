@@ -464,7 +464,9 @@ local function setStronghold(on)
     end)
 end
 
--- AUTO BRING CHILDREN (Lost Child mobs -> bring them to player)
+-- AUTO BRING CHILDREN (Save Kids) - 4-phase state machine
+-- FIND -> COLLECT (tp to child) -> BAG (child gone = collected) -> CAMP (tp & drop) -> FIND
+local KidPhase = "idle"
 local function setBringChildren(on)
     state.bringchildren = on
     if conns.bringchildren then conns.bringchildren:Disconnect(); conns.bringchildren=nil end
