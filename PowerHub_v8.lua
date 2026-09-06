@@ -189,7 +189,6 @@ function Window:AddTab(name, icon)
         list.BackgroundColor3=UI.Theme.panel; list.BackgroundTransparency=0.2; list.BorderSizePixel=0; list.Visible=false
         list.ScrollBarThickness=4; list.AutomaticCanvasSize=Enum.AutomaticSize.Y; list.Parent=core
         local ll=Instance.new("UIListLayout"); ll.SortOrder=Enum.SortOrder.LayoutOrder; ll.Padding=UDim.new(0,2); ll.Parent=list
-        core.AutomaticCanvasSize = Enum.AutomaticSize.Y
 
         local selected = opts.Default or opts.Options and opts.Options[1]
         local function fill()
