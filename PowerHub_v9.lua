@@ -58,42 +58,106 @@ local State = {
     AutoCampfire = false, AutoCraft = false, AutoGold = false,
     AutoChop = false, AutoCook = false, AutoCrockpot = false,
     AutoStronghold = false, KillAura = false, AntiAFK = false,
-    Fly = false, NoClip = false, ESP = false,
+    Fly = false, NoClip = false, ESP = false, GodMode = false,
 }
 
 local Settings = {
     CampfireFuel = "Logs",
-    CookList = {"Morsel", "Steak", "Raw Steak", "Raw Morsel", "Fish", "Raw Fish",
-                "Monster Meat", "Raw Monster Meat", "Kelp", "Raw Kelp"},
+    -- ALL fuel items from wiki
+    FuelItems = {"Log", "Logs", "Coal", "Fuel Canister", "Fuel Canister",
+        "Oil Barrel", "Biofuel", "Wood", "Sticks", "Stick", "Branch",
+        "Wooden Chair", "Wooden Table", "Wooden Plank", "Plank",
+        "Super Log", "Charcoal", "Paper", "Cloth", "Leather",
+        "Glowing Pumpkin", "Pumpkin"},
+    -- ALL cookable raw food from wiki
+    CookList = {"Raw Morsel", "Morsel", "Raw Steak", "Steak",
+        "Raw Fish", "Fish", "Raw Monster Meat", "Monster Meat",
+        "Raw Kelp", "Kelp", "Berry", "Carrot", "Mushroom",
+        "Egg", "Raw Egg", "Raw Frog Leg", "Frog Leg",
+        "Raw Bunny Leg", "Bunny Leg", "Raw Wolf Leg", "Wolf Leg",
+        "Cactus Fruit", "Pumpkin"},
     ChopRange = 15, KillAuraRange = 20, FlySpeed = 50,
     GoldRange = 50, StrongholdRange = 100, AntiAFKInterval = 120,
 }
 
 -- ═══════════════════════════════════════════════════════════
--- AUTO CAMPFIRE
+-- AUTO CAMPFIRE — drag ALL fuel items to campfire
 -- ═══════════════════════════════════════════════════════════
+local function isFuel(name)
+    local n = name:lower()
+    for _, f in pairs(Settings.FuelItems) do
+        if n:find(f:lower()) then return true end
+    end
+    return false
+end
+
+local function findCampfire()
+    -- Search multiple locations
+    local searchPaths = {
+        workspace:FindFirstChild("Map"),
+        workspace.Map and workspace.Map:FindFirstChild("Campground"),
+    }
+    for _, parent in pairs(searchPaths) do
+        if parent then
+            for _, obj in pairs(parent:GetDescendants()) do
+                if obj:IsA("Model") then
+                    local n = obj.Name:lower()
+                    if n:find("campfire") or n:find("camp fire") or n:find("fire")
+                        or n:find("bonfire") or n:find("flame") then
+                        -- Must be a structure, not an effect
+                        local part = obj:FindFirstChildWhichIsA("BasePart")
+                        if part then return obj end
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
 task.spawn(function()
     while true do
         if State.AutoCampfire then
             pcall(function()
-                local cf = workspace.Map.Campground:FindFirstChild("Campfire")
-                    or workspace.Map.Campground:FindFirstChild("Fire")
-                    or workspace.Map:FindFirstChild("Campfire")
+                local cf = findCampfire()
                 if not cf then return end
 
+                -- Get campfire position (use PrimaryPart or first BasePart)
+                local cfPart = cf.PrimaryPart or cf:FindFirstChildWhichIsA("BasePart")
+                if not cfPart then return end
+                local cfPos = cfPart.Position
+
+                -- Scan ALL descendants for fuel items
                 for _, item in pairs(workspace:GetDescendants()) do
                     if not State.AutoCampfire then break end
                     if item:IsA("Model") and item:FindFirstChildWhichIsA("BasePart") then
-                        local n = item.Name:lower()
-                        if n:find("coal") or n:find("log") or n:find("wood") or n:find("stick") then
-                            local d = (item:GetPivot().Position - HRP.Position).Magnitude
-                            if d < 50 then
-                                pcall(function()
-                                    fire("RequestStartDraggingItem", item)
+                        if isFuel(item.Name) then
+                            local itemPart = item.PrimaryPart or item:FindFirstChildWhichIsA("BasePart")
+                            if itemPart then
+                                local d = (itemPart.Position - HRP.Position).Magnitude
+                                -- Pick up from reasonable distance
+                                if d < 60 then
+                                    -- Method 1: Drag + Throw at campfire
+                                    pcall(function()
+                                        fire("RequestStartDraggingItem", item)
+                                        task.wait(0.4)
+                                        fire("RequestThrowItem", cfPos)
+                                    end)
+                                    task.wait(0.6)
+
+                                    -- Method 2: If drag failed, try proximity-based add
+                                    pcall(function()
+                                        fire("RequestGiveItemToNPC", cf, item)
+                                    end)
                                     task.wait(0.3)
-                                    fire("RequestThrowItem", cf.Position)
-                                end)
-                                task.wait(0.5)
+
+                                    -- Method 3: Try direct fuel add
+                                    pcall(function()
+                                        fire("AddFuel", item)
+                                        fire("FuelCampfire", item)
+                                    end)
+                                    task.wait(0.5)
+                                end
                             end
                         end
                     end
@@ -172,8 +236,12 @@ task.spawn(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════
--- AUTO CHOP
+-- AUTO CHOP — NO TELEPORT, auto-damage when player is near
 -- ═══════════════════════════════════════════════════════════
+local treePatterns = {"tree", "log", "birch", "pine", "oak", "dead tree",
+    "stump", "trunk", "branch", "bush", "shrub", "brightwood", "elm",
+    "willow", "cedar", "redwood", "sapling", "foliage"}
+
 task.spawn(function()
     while true do
         if State.AutoChop then
@@ -182,13 +250,44 @@ task.spawn(function()
                     if not State.AutoChop then break end
                     if obj:IsA("Model") and obj:FindFirstChildWhichIsA("BasePart") then
                         local n = obj.Name:lower()
-                        if n:find("tree") or n:find("log") or n:find("birch") or n:find("pine") or n:find("oak") or n:find("dead") or n:find("super") then
-                            local d = (obj:GetPivot().Position - HRP.Position).Magnitude
-                            if d < Settings.ChopRange then
-                                HRP.CFrame = obj:GetPivot() * CFrame.new(0, 0, 3)
+                        local isTree = false
+                        for _, pat in pairs(treePatterns) do
+                            if n:find(pat) then isTree = true; break end
+                        end
+
+                        if isTree then
+                            local pivot = obj:GetPivot()
+                            local d = (pivot.Position - HRP.Position).Magnitude
+
+                            -- Only chop if player is ALREADY within range (no teleport!)
+                            if d <= Settings.ChopRange then
+                                -- Auto-equip axe if needed
+                                pcall(function()
+                                    if not Character:FindFirstChildWhichIsA("Tool") then
+                                        -- Find axe in Backpack
+                                        local bp = LP:FindFirstChild("Backpack")
+                                        if bp then
+                                            for _, tool in pairs(bp:GetChildren()) do
+                                                if tool:IsA("Tool") and tool.Name:lower():find("axe") then
+                                                    Hum:EquipTool(tool)
+                                                    break
+                                                end
+                                            end
+                                        end
+                                    end
+                                end)
                                 task.wait(0.1)
+
+                                -- Damage the tree via remote
                                 pcall(function() fire("ToolDamageObject", obj) end)
                                 task.wait(0.3)
+
+                                -- Also activate tool for animation
+                                pcall(function()
+                                    local tool = Character:FindFirstChildWhichIsA("Tool")
+                                    if tool then tool:Activate() end
+                                end)
+                                task.wait(0.5)
                             end
                         end
                     end
@@ -200,31 +299,42 @@ task.spawn(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════
--- AUTO COOK
+-- AUTO COOK — teleport raw food near campfire to cook
 -- ═══════════════════════════════════════════════════════════
+local function isCookable(name)
+    local n = name:lower()
+    for _, cn in pairs(Settings.CookList) do
+        if n:find(cn:lower()) then return true end
+    end
+    return false
+end
+
 task.spawn(function()
     while true do
         if State.AutoCook then
             pcall(function()
-                local cf = workspace.Map.Campground:FindFirstChild("Campfire")
-                    or workspace.Map.Campground:FindFirstChild("Fire")
-                    or workspace.Map:FindFirstChild("Campfire")
+                local cf = findCampfire()
                 if not cf then return end
-                local fp = cf:GetPivot().Position
+                local cfPart = cf.PrimaryPart or cf:FindFirstChildWhichIsA("BasePart")
+                if not cfPart then return end
+                local fp = cfPart.Position
 
                 for _, item in pairs(workspace:GetDescendants()) do
                     if not State.AutoCook then break end
                     if item:IsA("Model") and item:FindFirstChildWhichIsA("BasePart") then
-                        for _, cn in pairs(Settings.CookList) do
-                            if item.Name:lower():find(cn:lower()) then
-                                local d = (item:GetPivot().Position - HRP.Position).Magnitude
-                                if d < 50 then
+                        if isCookable(item.Name) then
+                            local itemPart = item.PrimaryPart or item:FindFirstChildWhichIsA("BasePart")
+                            if itemPart then
+                                local d = (itemPart.Position - HRP.Position).Magnitude
+                                if d < 60 then
                                     pcall(function()
-                                        item:SetPrimaryPartCFrame(CFrame.new(fp + Vector3.new(0, 5, 0)))
-                                        task.wait(0.3)
+                                        -- Teleport food to campfire position (above flames)
+                                        item:SetPrimaryPartCFrame(CFrame.new(fp + Vector3.new(0, 4, 0)))
+                                        task.wait(0.4)
                                         fire("RequestCookItem", item)
+                                        fire("CookItem", item)
                                     end)
-                                    task.wait(0.5)
+                                    task.wait(0.6)
                                 end
                             end
                         end
@@ -243,26 +353,37 @@ task.spawn(function()
     while true do
         if State.AutoCrockpot then
             pcall(function()
+                -- Find crockpot near campfire area
                 local cp = nil
-                for _, obj in pairs(workspace.Map.Campground:GetDescendants()) do
-                    if obj:IsA("Model") and obj.Name:lower():find("crock") then cp = obj; break end
+                local searchArea = workspace:FindFirstChild("Map")
+                if searchArea then
+                    for _, obj in pairs(searchArea:GetDescendants()) do
+                        if obj:IsA("Model") and obj.Name:lower():find("crock") then
+                            cp = obj; break
+                        end
+                    end
                 end
                 if not cp then return end
-                local cpp = cp:GetPivot().Position
+                local cpp = cp.PrimaryPart or cp:FindFirstChildWhichIsA("BasePart")
+                if not cpp then return end
+                local cpPos = cpp.Position
 
-                local ings = {"Morsel", "Steak", "Monster Meat", "Fish", "Kelp", "Berry", "Carrot", "Mushroom", "Egg"}
+                local ings = {"Morsel", "Steak", "Monster Meat", "Fish", "Kelp",
+                    "Berry", "Carrot", "Mushroom", "Egg", "Frog Leg",
+                    "Bunny Leg", "Wolf Leg", "Cactus Fruit", "Pumpkin"}
                 for _, item in pairs(workspace:GetDescendants()) do
                     if not State.AutoCrockpot then break end
                     if item:IsA("Model") and item:FindFirstChildWhichIsA("BasePart") then
+                        local n = item.Name:lower()
                         for _, ing in pairs(ings) do
-                            if item.Name:lower():find(ing:lower()) then
+                            if n:find(ing:lower()) then
                                 local d = (item:GetPivot().Position - HRP.Position).Magnitude
-                                if d < 50 then
+                                if d < 60 then
                                     pcall(function()
                                         fire("RequestStartDraggingItem", item)
-                                        task.wait(0.3)
+                                        task.wait(0.4)
                                         fire("RequestGiveItemToNPC", cp, item)
-                                        fire("RequestThrowItem", cpp)
+                                        fire("RequestThrowItem", cpPos)
                                     end)
                                     task.wait(0.5)
                                 end
@@ -370,6 +491,37 @@ task.spawn(function()
             end)
         end
         task.wait(Settings.AntiAFKInterval)
+    end
+end)
+
+-- ═══════════════════════════════════════════════════════════
+-- GOD MODE — prevent health decrease
+-- ═══════════════════════════════════════════════════════════
+local godModeConn = nil
+
+local function enableGodMode()
+    if godModeConn then pcall(function() godModeConn:Disconnect() end) end
+    godModeConn = Hum.HealthChanged:Connect(function()
+        if State.GodMode and Hum.Health < Hum.MaxHealth then
+            Hum.Health = Hum.MaxHealth
+        end
+    end)
+    -- Also set max health immediately
+    pcall(function() Hum.Health = Hum.MaxHealth end)
+end
+
+local function disableGodMode()
+    if godModeConn then
+        pcall(function() godModeConn:Disconnect() end)
+        godModeConn = nil
+    end
+end
+
+-- Re-hook on respawn
+LP.CharacterAdded:Connect(function(c)
+    if State.GodMode then
+        task.wait(1)
+        enableGodMode()
     end
 end)
 
@@ -785,6 +937,18 @@ Tab1:CreateToggle({
 
 -- ── TAB: COMBAT ───────────────────────────────────────────
 local Tab2 = Window:CreateTab("⚔️ Combat", 4483362458)
+Tab2:CreateSection("Defense")
+
+Tab2:CreateToggle({
+    Name = "🛡️ God Mode",
+    CurrentValue = false,
+    Flag = "GodMode",
+    Callback = function(v)
+        State.GodMode = v
+        if v then enableGodMode() else disableGodMode() end
+    end,
+})
+
 Tab2:CreateSection("Offense")
 
 Tab2:CreateToggle({
