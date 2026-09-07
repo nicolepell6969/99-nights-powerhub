@@ -421,66 +421,310 @@ RunService.Stepped:Connect(function()
 end)
 
 -- ═══════════════════════════════════════════════════════════
--- ESP
+-- ESP ENGINE
 -- ═══════════════════════════════════════════════════════════
 local espObjs = {}
 
-local function mkESP(part, col, txt)
-    if not part or espObjs[part] then return end
+-- Sub-category toggles for ESP
+State.ESP_Players = false
+State.ESP_Gold = false
+State.ESP_Enemies = false
+State.ESP_Friendlies = false
+State.ESP_Items = false
+State.ESP_Kids = false
+State.ESP_Distance = true  -- show distance by default
+
+-- Clear ALL ESP objects (called when ESP master is off or refresh)
+local function clearAllESP()
+    for obj, bb in pairs(espObjs) do
+        pcall(function() if bb and bb.Parent then bb:Destroy() end end)
+    end
+    espObjs = {}
+end
+
+-- Remove stale ESP entries (object destroyed or nil parent)
+local function cleanStaleESP()
+    for obj, bb in pairs(espObjs) do
+        if not obj or not obj.Parent or (obj:IsA("BasePart") and not obj.Parent) then
+            pcall(function() if bb and bb.Parent then bb:Destroy() end end)
+            espObjs[obj] = nil
+        end
+    end
+end
+
+-- Create BillboardGui ESP on a part
+local function mkBillboard(part, col, lines)
+    if not part then return end
+    -- If this part already has an ESP, destroy old one first (for HP updates)
+    if espObjs[part] then
+        pcall(function() espObjs[part]:Destroy() end)
+        espObjs[part] = nil
+    end
+
     local bb = Instance.new("BillboardGui")
-    bb.Size = UDim2.new(0,200,0,50)
-    bb.StudsOffset = Vector3.new(0,3,0)
+    bb.Name = "PH_ESP"
+    bb.Size = UDim2.new(0, 220, 0, 0)
+    bb.StudsOffset = Vector3.new(0, 3, 0)
     bb.AlwaysOnTop = true
+    bb.LightInfluence = 0
     bb.Adornee = part
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(1,0,1,0)
-    lbl.BackgroundTransparency = 1
-    lbl.TextColor3 = col
-    lbl.TextStrokeTransparency = 0
-    lbl.TextScaled = true
-    lbl.Font = Enum.Font.GothamBold
-    lbl.Text = txt
-    lbl.Parent = bb
+
+    -- Auto-size height based on number of lines
+    local lineH = 16
+    local totalH = #lines * lineH + 8
+    bb.Size = UDim2.new(0, 220, 0, totalH)
+
+    for i, line in ipairs(lines) do
+        local lbl = Instance.new("TextLabel")
+        lbl.Name = "Line" .. i
+        lbl.Size = UDim2.new(1, -8, 0, lineH)
+        lbl.Position = UDim2.new(0, 4, 0, (i - 1) * lineH + 4)
+        lbl.BackgroundTransparency = 1
+        lbl.TextColor3 = line.Color or col
+        lbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+        lbl.TextStrokeTransparency = 0.2
+        lbl.TextScaled = false
+        lbl.TextSize = 12
+        lbl.Font = Enum.Font.GothamBold
+        lbl.TextXAlignment = line.Align or Enum.TextXAlignment.Left
+        lbl.Text = line.Text or ""
+        lbl.Parent = bb
+
+        -- Optional health bar (for entities)
+        if line.HealthBar then
+            local barBg = Instance.new("Frame")
+            barBg.Size = UDim2.new(1, -8, 0, 4)
+            barBg.Position = UDim2.new(0, 4, 0, (i - 1) * lineH + 4 + lineH - 2)
+            barBg.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+            barBg.BorderSizePixel = 0
+            barBg.Parent = bb
+
+            local barFill = Instance.new("Frame")
+            barFill.Size = UDim2.new(line.HealthPct or 1, 0, 1, 0)
+            barFill.BackgroundColor3 = line.HealthColor or col
+            barFill.BorderSizePixel = 0
+            barFill.Parent = barBg
+        end
+    end
+
     bb.Parent = part
     espObjs[part] = bb
 end
 
+-- Helper: format distance
+local function distStr(from, to)
+    if not from or not to then return "" end
+    local d = (from - to).Magnitude
+    if d < 1 then return "[0m]" end
+    if d < 100 then return string.format("[%.0fm]", d) end
+    return string.format("[%.0fm]", d)
+end
+
+-- Helper: health color (green→yellow→red)
+local function hpColor(pct)
+    if pct > 0.5 then return Color3.fromRGB(0, 255, 80)
+    elseif pct > 0.25 then return Color3.fromRGB(255, 200, 0)
+    else return Color3.fromRGB(255, 50, 30) end
+end
+
+-- Child names for Kid ESP
+local KidNames = {"dino", "squid", "kraken", "koala"}
+
+-- Item name patterns for Item ESP
+local ItemPatterns = {"morsel", "steak", "fish", "kelp", "berry", "carrot",
+    "mushroom", "egg", "meat", "coal", "log", "iron", "gold bar",
+    "stone", "scrap", "wood", "stick"}
+
+-- ═══════════════════════════════════════════════════════════
+-- ESP MAIN LOOP
+-- ═══════════════════════════════════════════════════════════
 task.spawn(function()
     while true do
+        -- ALWAYS clean stale entries even when master ESP is off
+        cleanStaleESP()
+
         if State.ESP then
             pcall(function()
-                for p, bb in pairs(espObjs) do
-                    if not p or not p.Parent then bb:Destroy(); espObjs[p] = nil end
-                end
-                for _, plr in pairs(Players:GetPlayers()) do
-                    if plr ~= LP and plr.Character then
-                        local r = plr.Character:FindFirstChild("HumanoidRootPart")
-                        if r then mkESP(r, Color3.fromRGB(0,255,0), plr.Name) end
+                local myPos = HRP.Position
+
+                -- ── PLAYER ESP ──
+                if State.ESP_Players then
+                    for _, plr in pairs(Players:GetPlayers()) do
+                        if plr ~= LP and plr.Character then
+                            local root = plr.Character:FindFirstChild("HumanoidRootPart")
+                            local hum = plr.Character:FindFirstChildWhichIsA("Humanoid")
+                            if root and hum then
+                                local lines = {{Text = plr.Name, Color = Color3.fromRGB(0, 255, 0)}}
+                                if State.ESP_Distance then
+                                    table.insert(lines, {Text = distStr(myPos, root.Position), Color = Color3.fromRGB(200, 200, 200), Align = Enum.TextXAlignment.Right})
+                                end
+                                -- Health bar
+                                local hpPct = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+                                table.insert(lines, {Text = string.format("HP %d/%d", math.floor(hum.Health), math.floor(hum.MaxHealth)), Color = hpColor(hpPct), HealthBar = true, HealthPct = hpPct, HealthColor = hpColor(hpPct)})
+                                mkBillboard(root, Color3.fromRGB(0, 255, 0), lines)
+                            end
+                        end
                     end
-                end
-                for _, item in pairs(workspace:GetDescendants()) do
-                    if item:IsA("Model") then
-                        local n = item.Name:lower()
-                        if n:find("gold") or n:find("diamond") or n:find("coin") then
-                            local r = item:FindFirstChildWhichIsA("BasePart")
-                            if r then mkESP(r, Color3.fromRGB(255,215,0), item.Name) end
+                else
+                    -- Remove player ESP entries
+                    for obj, bb in pairs(espObjs) do
+                        if obj and obj.Parent then
+                            local isPlayerRoot = false
+                            for _, plr in pairs(Players:GetPlayers()) do
+                                if plr ~= LP and plr.Character and obj == plr.Character:FindFirstChild("HumanoidRootPart") then
+                                    isPlayerRoot = true; break
+                                end
+                            end
+                            if isPlayerRoot then pcall(function() bb:Destroy() end); espObjs[obj] = nil end
                         end
                     end
                 end
-                for _, e in pairs(workspace:GetDescendants()) do
-                    if e:IsA("Model") and e:FindFirstChildWhichIsA("Humanoid") then
-                        local r = e:FindFirstChild("HumanoidRootPart") or e:FindFirstChildWhichIsA("BasePart")
-                        if r then
+
+                -- ── GOLD / DIAMOND ESP ──
+                if State.ESP_Gold then
+                    for _, item in pairs(workspace:GetDescendants()) do
+                        if item:IsA("Model") then
+                            local n = item.Name:lower()
+                            if n:find("gold") or n:find("diamond") or n:find("coin") or n:find("gem") or n:find("currency") then
+                                local root = item:FindFirstChildWhichIsA("BasePart")
+                                if root then
+                                    local lines = {{Text = item.Name, Color = Color3.fromRGB(255, 215, 0)}}
+                                    if State.ESP_Distance then
+                                        table.insert(lines, {Text = distStr(myPos, root.Position), Color = Color3.fromRGB(200, 200, 200), Align = Enum.TextXAlignment.Right})
+                                    end
+                                    mkBillboard(root, Color3.fromRGB(255, 215, 0), lines)
+                                end
+                            end
+                        end
+                    end
+                end
+
+                -- ── ENEMY ESP ──
+                if State.ESP_Enemies then
+                    for _, e in pairs(workspace:GetDescendants()) do
+                        if e:IsA("Model") and e:FindFirstChildWhichIsA("Humanoid") then
+                            local name = e.Name:lower()
+                            local isHostile = false
+                            for _, h in pairs(Hostiles) do
+                                if name:find(h) then isHostile = true; break end
+                            end
+                            if isHostile then
+                                local root = e:FindFirstChild("HumanoidRootPart") or e:FindFirstChildWhichIsA("BasePart")
+                                local hum = e:FindFirstChildWhichIsA("Humanoid")
+                                if root and hum then
+                                    local hpPct = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+                                    local lines = {
+                                        {Text = e.Name, Color = Color3.fromRGB(255, 60, 40)},
+                                        {Text = string.format("HP %d/%d", math.floor(hum.Health), math.floor(hum.MaxHealth)), Color = hpColor(hpPct), HealthBar = true, HealthPct = hpPct, HealthColor = hpColor(hpPct)},
+                                    }
+                                    if State.ESP_Distance then
+                                        table.insert(lines, {Text = distStr(myPos, root.Position), Color = Color3.fromRGB(255, 150, 150), Align = Enum.TextXAlignment.Right})
+                                    end
+                                    mkBillboard(root, Color3.fromRGB(255, 60, 40), lines)
+                                end
+                            end
+                        end
+                    end
+                else
+                    for obj, bb in pairs(espObjs) do
+                        if obj and obj.Parent then
                             local isH = false
-                            for _, h in pairs(Hostiles) do if e.Name:lower():find(h) then isH = true; break end end
-                            local c = isH and Color3.fromRGB(255,0,0) or Color3.fromRGB(0,200,255)
-                            mkESP(r, c, e.Name .. " HP:" .. math.floor(e:FindFirstChildWhichIsA("Humanoid").Health))
+                            for _, e in pairs(workspace:GetDescendants()) do
+                                if e:IsA("Model") and (obj == e:FindFirstChild("HumanoidRootPart") or obj == e:FindFirstChildWhichIsA("BasePart")) then
+                                    local n = e.Name:lower()
+                                    for _, h in pairs(Hostiles) do if n:find(h) then isH = true; break end end
+                                end
+                            end
+                            if isH then pcall(function() bb:Destroy() end); espObjs[obj] = nil end
                         end
                     end
                 end
+
+                -- ── FRIENDLY / NPC ESP ──
+                if State.ESP_Friendlies then
+                    for _, e in pairs(workspace:GetDescendants()) do
+                        if e:IsA("Model") and e:FindFirstChildWhichIsA("Humanoid") then
+                            local name = e.Name:lower()
+                            local isFriendly = false
+                            -- Check it's NOT hostile
+                            local isH = false
+                            for _, h in pairs(Hostiles) do if name:find(h) then isH = true; break end end
+                            -- Check it's NOT a player
+                            local isP = false
+                            for _, plr in pairs(Players:GetPlayers()) do
+                                if plr.Character and e == plr.Character then isP = true; break end
+                            end
+                            if not isH and not isP then isFriendly = true end
+
+                            if isFriendly then
+                                local root = e:FindFirstChild("HumanoidRootPart") or e:FindFirstChildWhichIsA("BasePart")
+                                local hum = e:FindFirstChildWhichIsA("Humanoid")
+                                if root and hum then
+                                    local hpPct = math.clamp(hum.Health / hum.MaxHealth, 0, 1)
+                                    local lines = {
+                                        {Text = e.Name, Color = Color3.fromRGB(0, 200, 255)},
+                                        {Text = string.format("HP %d/%d", math.floor(hum.Health), math.floor(hum.MaxHealth)), Color = hpColor(hpPct), HealthBar = true, HealthPct = hpPct, HealthColor = hpColor(hpPct)},
+                                    }
+                                    if State.ESP_Distance then
+                                        table.insert(lines, {Text = distStr(myPos, root.Position), Color = Color3.fromRGB(150, 220, 255), Align = Enum.TextXAlignment.Right})
+                                    end
+                                    mkBillboard(root, Color3.fromRGB(0, 200, 255), lines)
+                                end
+                            end
+                        end
+                    end
+                end
+
+                -- ── KID ESP (missing children) ──
+                if State.ESP_Kids then
+                    for _, e in pairs(workspace:GetDescendants()) do
+                        if e:IsA("Model") then
+                            local n = e.Name:lower()
+                            for _, kn in pairs(KidNames) do
+                                if n:find(kn) and (n:find("kid") or n:find("child") or n:find("baby")) then
+                                    local root = e:FindFirstChildWhichIsA("BasePart")
+                                    if root then
+                                        local lines = {{Text = "🧒 " .. e.Name, Color = Color3.fromRGB(255, 150, 255)}}
+                                        if State.ESP_Distance then
+                                            table.insert(lines, {Text = distStr(myPos, root.Position), Color = Color3.fromRGB(255, 200, 255), Align = Enum.TextXAlignment.Right})
+                                        end
+                                        mkBillboard(root, Color3.fromRGB(255, 150, 255), lines)
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+
+                -- ── ITEM ESP (food, materials, fuel) ──
+                if State.ESP_Items then
+                    for _, item in pairs(workspace:GetDescendants()) do
+                        if item:IsA("Model") and item:FindFirstChildWhichIsA("BasePart") then
+                            local n = item.Name:lower()
+                            for _, pat in pairs(ItemPatterns) do
+                                if n:find(pat) then
+                                    local root = item:FindFirstChildWhichIsA("BasePart")
+                                    if root then
+                                        local lines = {{Text = item.Name, Color = Color3.fromRGB(180, 255, 100)}}
+                                        if State.ESP_Distance then
+                                            table.insert(lines, {Text = distStr(myPos, root.Position), Color = Color3.fromRGB(200, 220, 150), Align = Enum.TextXAlignment.Right})
+                                        end
+                                        mkBillboard(root, Color3.fromRGB(180, 255, 100), lines)
+                                    end
+                                    break
+                                end
+                            end
+                        end
+                    end
+                end
+
             end)
+        else
+            -- MASTER ESP OFF → destroy everything
+            clearAllESP()
         end
-        task.wait(1)
+
+        task.wait(0.5)
     end
 end)
 
@@ -671,18 +915,66 @@ Tab4:CreateSlider({
 
 -- ── TAB: VISUALS ──────────────────────────────────────────
 local Tab5 = Window:CreateTab("👁️ Visuals", 4483362458)
-Tab5:CreateSection("ESP")
+Tab5:CreateSection("Master Switch")
 
 Tab5:CreateToggle({
-    Name = "ESP (Players + Items + Enemies)",
+    Name = "ESP Master",
     CurrentValue = false,
     Flag = "ESP",
     Callback = function(v) State.ESP = v end,
 })
 
-Tab5:CreateParagraph({
-    Title = "ESP Colors",
-    Content = "🟢 Green = Players | 🟡 Yellow = Gold/Diamonds | 🔴 Red = Hostiles | 🔵 Blue = Friendlies"
+Tab5:CreateSection("Show Category")
+
+Tab5:CreateToggle({
+    Name = "🟢 Players",
+    CurrentValue = false,
+    Flag = "ESP_Players",
+    Callback = function(v) State.ESP_Players = v end,
+})
+
+Tab5:CreateToggle({
+    Name = "🔴 Enemies",
+    CurrentValue = false,
+    Flag = "ESP_Enemies",
+    Callback = function(v) State.ESP_Enemies = v end,
+})
+
+Tab5:CreateToggle({
+    Name = "🔵 Friendlies / NPCs",
+    CurrentValue = false,
+    Flag = "ESP_Friendlies",
+    Callback = function(v) State.ESP_Friendlies = v end,
+})
+
+Tab5:CreateToggle({
+    Name = "🟡 Gold / Diamonds",
+    CurrentValue = false,
+    Flag = "ESP_Gold",
+    Callback = function(v) State.ESP_Gold = v end,
+})
+
+Tab5:CreateToggle({
+    Name = "🟢 Items (Food/Materials)",
+    CurrentValue = false,
+    Flag = "ESP_Items",
+    Callback = function(v) State.ESP_Items = v end,
+})
+
+Tab5:CreateToggle({
+    Name = "🧒 Kids (Missing Children)",
+    CurrentValue = false,
+    Flag = "ESP_Kids",
+    Callback = function(v) State.ESP_Kids = v end,
+})
+
+Tab5:CreateSection("Options")
+
+Tab5:CreateToggle({
+    Name = "Show Distance",
+    CurrentValue = true,
+    Flag = "ESP_Distance",
+    Callback = function(v) State.ESP_Distance = v end,
 })
 
 -- ═══════════════════════════════════════════════════════════
